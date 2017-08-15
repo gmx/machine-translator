@@ -28,6 +28,7 @@
 namespace SMACP\MachineTranslator\Classes;
 
 use SMACP\MachineTranslator\Classes\SimpleXmlExtended;
+use \Exception;
 
 /**
  * Translates xlf files
@@ -367,7 +368,7 @@ class XlfTranslator
         }
         
         if ($dh = opendir($this->dir)) {
-            
+
             if ($this->output) {
                 echo 'Translating xlf in: ' . $this->dir . PHP_EOL;
                 echo PHP_EOL;
@@ -375,6 +376,7 @@ class XlfTranslator
             
             while (false !== ($filename = readdir($dh))) {
                 $filePath = $this->dir . $filename;
+
                 if (is_file($filePath)) {
                     $parts = explode('.', $filename);
                     
@@ -390,21 +392,21 @@ class XlfTranslator
                     $locale = $parts[1];
                     
                     $i = 0;
-                    
+
                     if (!$this->shouldParseCatalogue($catalogue)) {
                         if (!in_array($catalogue, $cataloguesSkipped)) {
                             $cataloguesSkipped[] = $catalogue;
                         }
                         continue;
                     }
-                    
+
                     if (!$this->shouldParseLocale($locale)) {
                         if (!in_array($locale, $localesSkipped)) {
                             $localesSkipped[] = $locale;
                         }
                         continue;
                     }
-                    
+
                     if ($this->output) {
                         echo 'File: ' . $filename . PHP_EOL;
                         echo 'Catalogue: ' . $catalogue . PHP_EOL;
@@ -439,18 +441,34 @@ class XlfTranslator
                             $target = (string) $bValue->target;
                             $attributes = $bValue->attributes();
 
-                            if ($source && $target) {
-                                if ($source !== $target) {
+                            if ($source || ($target && $this->isICU( $target ))) {
+
+                                if ($source == '' && $this->isICU( $target )) {
+                                    $tokens = $this->parseTokensFromICU( $target );
+                                    $resultants = [];
+                                    foreach ($tokens as $value) {
+                                        $strRequested++;
+                                        $resultants[] = $this->translator->translate( $value, $this->sourceLocale, $locale );
+                                    }
+
+                                    foreach ($tokens as &$t) {$t = '{' . $t .'}'; }
+                                    foreach ($resultants as &$r) {$r = '{' . $r . '}'; }
+
+                                    $translated = str_replace( $tokens, $resultants, $target );
+                                }
+
+                                elseif ( ! $source) {
                                     continue;
                                 }
 
-                                if ($this->memory && isset($attributes[$this->attributes['mt']])) {
-                                    continue;
+                                else {
+                                    if ($this->memory && isset($attributes[$this->attributes['mt']])) {
+                                        continue;
+                                    }
+                                    
+                                    $strRequested++;
+                                    $translated = $this->translator->translate($source, $this->sourceLocale, $locale);
                                 }
-                                
-                                $strRequested++;
-                                
-                                $translated = $this->translator->translate($source, $this->sourceLocale, $locale);
 
                                 if ($translated) {
                                     $new[$i]['source'] = $source;
@@ -596,5 +614,38 @@ class XlfTranslator
         fwrite($fwh, $xml);
         
         return $this;
+    }
+
+    protected function parseTokensFromICU( $target ) {
+        $target = trim( $target );
+
+        if ($target[0] == '{') {
+            $tokens = []; $stack = 0; $cur = '';
+
+            for($i=0; $i<strlen($target); $i++) {
+
+                if ($target[$i] == '{') {
+                    $stack++;
+                    continue;
+                }
+
+                if ($target[$i] == '}') {
+                    $stack--;
+                    if ( $cur ) 
+                        $tokens[] = $cur;
+                    $cur = '';
+                    continue;
+                }
+
+                if ($stack == 2) 
+                    $cur .= $target[ $i ];
+            }
+        }
+
+        return $tokens;
+    }
+
+    protected function isICU( $str ) {
+        return $str[0] == '{';
     }
 }
